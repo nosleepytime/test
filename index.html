@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OMUS AI</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/atom-one-dark.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+    <style>
+        /* [Previous CSS styles remain exactly the same] */
+        /* ... */
+    </style>
+</head>
+<body data-theme="light">
+    <!-- [Previous HTML structure remains exactly the same] -->
+    <!-- ... -->
+
+    <script>
+        // DOM Elements (same as before)
+        // ...
+
+        // State with additional AI-related properties
+        let currentModel = 'openai-large'; // Default model
+        let currentVoice = 'shimmer'; // Default voice
+        let currentThread = 'Welcome to OMUS AI';
+        let messages = [];
+        let attachments = [];
+        let activeStreamController = null; // To handle streaming abort
+        let currentThreadId = generateThreadId();
+        let threads = {
+            [currentThreadId]: {
+                id: currentThreadId,
+                title: 'Welcome to OMUS AI',
+                createdAt: new Date().toISOString(),
+                messages: []
+            }
+        };
+
+        // API Configuration
+        const API_URL = "https://text.pollinations.ai/openai";
+        const TTS_API_URL = "https://text.pollinations.ai/openai";
+        const MODEL_ICONS = {
+            'openai-large': 'https://via.placeholder.com/24/6e48aa/ffffff?text=G4',
+            'openai': 'https://via.placeholder.com/24/6e48aa/ffffff?text=G4m',
+            'openai-fast': 'https://via.placeholder.com/24/6e48aa/ffffff?text=G4n',
+            'deepseek': 'https://via.placeholder.com/24/4776e6/ffffff?text=DS',
+            'qwen-coder': 'https://via.placeholder.com/24/9d50bb/ffffff?text=QW',
+            'mirexa': 'https://via.placeholder.com/24/ff6b6b/ffffff?text=MX',
+            'llamascout': 'https://via.placeholder.com/24/48c774/ffffff?text=LS',
+            'mistral': 'https://via.placeholder.com/24/20c997/ffffff?text=MS',
+            'phi': 'https://via.placeholder.com/24/6610f2/ffffff?text=P4',
+            'evil': 'https://via.placeholder.com/24/f83d3d/ffffff?text=EV',
+            'deepseek-reasoning': 'https://via.placeholder.com/24/4776e6/ffffff?text=DSR',
+            'grok': 'https://via.placeholder.com/24/1DA1F2/ffffff?text=GR',
+            'openai-reasoning': 'https://via.placeholder.com/24/6e48aa/ffffff?text=OR',
+            'bidara': 'https://via.placeholder.com/24/FF9900/ffffff?text=BD',
+            'searchgpt': 'https://via.placeholder.com/24/6e48aa/ffffff?text=SG'
+        };
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            // Load saved data
+            loadSavedData();
+            
+            // Add welcome message if it's a new chat
+            if (messages.length === 0) {
+                addWelcomeMessage();
+            }
+            
+            renderMessages();
+            renderThreads();
+        });
+
+        // [Previous event listeners remain the same until the sendMessage function]
+        // ...
+
+        // Modified sendMessage function with real AI integration
+        async function sendMessage() {
+            const message = inputBox.value.trim();
+            if (message === '' && attachments.length === 0) return;
+
+            // Add user message
+            const userMessage = {
+                id: generateMessageId(),
+                sender: 'user',
+                content: message,
+                time: getCurrentTime(),
+                attachments: [...attachments],
+                model: null
+            };
+            
+            messages.push(userMessage);
+            threads[currentThreadId].messages.push(userMessage);
+            saveToLocalStorage();
+            renderMessages();
+            scrollToBottom();
+
+            // Clear input and attachments
+            inputBox.value = '';
+            attachments = [];
+            fileInput.value = '';
+
+            // Show thinking indicator
+            const thinkingId = generateMessageId();
+            messages.push({
+                id: thinkingId,
+                sender: 'ai',
+                content: '',
+                time: getCurrentTime(),
+                model: currentModel,
+                thinking: true
+            });
+            renderMessages();
+            scrollToBottom();
+
+            try {
+                // Prepare the payload based on attachments
+                let payload;
+                if (attachments.some(att => att.type.startsWith('image/'))) {
+                    // Handle image attachments
+                    const imageAttachment = attachments.find(att => att.type.startsWith('image/'));
+                    const base64Image = await encodeImageToBase64(imageAttachment);
+                    
+                    payload = {
+                        model: currentModel,
+                        messages: [
+                            {
+                                role: 'user',
+                                content: [
+                                    { type: 'text', text: message },
+                                    { 
+                                        type: 'image_url',
+                                        image_url: {
+                                            url: `data:${imageAttachment.type};base64,${base64Image}`
+                                        }
+                                    }
+                                ]
+                            }
+                        ],
+                        max_tokens: parseInt(tokenSlider.value),
+                        temperature: parseFloat(tempSlider.value)
+                    };
+                } else {
+                    // Regular text message
+                    payload = {
+                        model: currentModel,
+                        system: "You are OMUS AI, a helpful AI assistant. Provide detailed, accurate responses and format your answers with proper markdown formatting for code, math, and other structured content.",
+                        messages: formatMessagesForAPI([...messages].filter(msg => !msg.thinking)),
+                        max_tokens: parseInt(tokenSlider.value),
+                        temperature: parseFloat(tempSlider.value),
+                        stream: true
+                    };
+                }
+
+                // Remove thinking indicator
+                messages = messages.filter(msg => msg.id !== thinkingId);
+                renderMessages();
+
+                // Call the API with streaming
+                await callAPIWithStreaming(payload);
+            } catch (error) {
+                console.error('Error:', error);
+                showError('Failed to get AI response', error);
+                
+                // Remove thinking indicator on error
+                messages = messages.filter(msg => msg.id !== thinkingId);
+                renderMessages();
+            }
+        }
+
+        // Helper function to format messages for API
+        function formatMessagesForAPI(chatMessages) {
+            return chatMessages.map(msg => {
+                return {
+                    role: msg.sender === 'user' ? 'user' : 'assistant',
+                    content: msg.content
+                };
+            });
+        }
+
+        // Function to call API with streaming
+        async function callAPIWithStreaming(payload) {
+            const responseId = generateMessageId();
+            let fullResponse = '';
+            let thinkingContent = '';
+            let isThinking = false;
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'text/event-stream'
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder('utf-8');
+                
+                // Add initial AI message
+                messages.push({
+                    id: responseId,
+                    sender: 'ai',
+                    content: '',
+                    time: getCurrentTime(),
+                    model: currentModel
+                });
+                renderMessages();
+                scrollToBottom();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunkText = decoder.decode(value, { stream: true });
+                    const events = chunkText.split('\n\n');
+
+                    for (const event of events) {
+                        if (event.startsWith('data: ')) {
+                            const data = event.replace('data: ', '').trim();
+
+                            if (data === '[DONE]') {
+                                // Finalize the message
+                                const aiMessageIndex = messages.findIndex(msg => msg.id === responseId);
+                                if (aiMessageIndex !== -1) {
+                                    messages[aiMessageIndex].content = fullResponse;
+                                    saveToLocalStorage();
+                                    renderMessages();
+                                    scrollToBottom();
+                                }
+                                return;
+                            }
+
+                            try {
+                                const json = JSON.parse(data);
+                                const content = json.choices?.[0]?.delta?.content || '';
+
+                                if (content) {
+                                    // Handle thinking pattern for reasoning models
+                                    if (currentModel.includes('reasoning')) {
+                                        if (content.includes('<think>')) {
+                                            isThinking = true;
+                                            continue;
+                                        } else if (content.includes('</think>')) {
+                                            isThinking = false;
+                                            continue;
+                                        }
+
+                                        if (isThinking) {
+                                            thinkingContent += content;
+                                            continue;
+                                        }
+                                    }
+
+                                    fullResponse += content;
+
+                                    // Update the message in real-time
+                                    const aiMessageIndex = messages.findIndex(msg => msg.id === responseId);
+                                    if (aiMessageIndex !== -1) {
+                                        messages[aiMessageIndex].content = fullResponse;
+                                        renderMessages();
+                                        scrollToBottom();
+                                    }
+                                }
+                            } catch (err) {
+                                console.warn('Non-JSON data:', data);
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Streaming error:', error);
+                showError('Streaming error occurred', error);
+                
+                // Update the message with whatever we have
+                const aiMessageIndex = messages.findIndex(msg => msg.id === responseId);
+                if (aiMessageIndex !== -1) {
+                    messages[aiMessageIndex].content = fullResponse || "Sorry, I encountered an error while generating my response.";
+                    saveToLocalStorage();
+                    renderMessages();
+                    scrollToBottom();
+                }
+            }
+        }
+
+        // Text-to-Speech function
+        async function textToSpeech(text, voice = currentVoice) {
+            try {
+                const payload = {
+                    model: "openai-audio",
+                    system: "You are a text-to-speech model. Only render the user text as speech without changing or interpreting it.",
+                    messages: [
+                        {
+                            role: "user",
+                            content: text
+                        }
+                    ],
+                    voice: voice
+                };
+
+                const response = await fetch(TTS_API_URL, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+                
+                try {
+                    const base64Audio = data.choices[0].message.audio.data;
+                    const binary = atob(base64Audio);
+                    const len = binary.length;
+                    const buffer = new Uint8Array(len);
+                    
+                    for (let i = 0; i < len; i++) {
+                        buffer[i] = binary.charCodeAt(i);
+                    }
+
+                    const blob = new Blob([buffer], { type: "audio/mpeg" });
+                    const audioUrl = URL.createObjectURL(blob);
+                    
+                    // Play the audio
+                    const audio = new Audio(audioUrl);
+                    audio.play();
+                    
+                    return audio;
+                } catch (err) {
+                    console.error("Error processing audio:", err);
+                    showError("Failed to process audio", err);
+                }
+            } catch (error) {
+                console.error("TTS Error:", error);
+                showError("Failed to generate speech", error);
+            }
+        }
+
+        // Image analysis function
+        async function analyzeImage(imageFile, question = "What's in this image?") {
+            try {
+                const base64Data = await encodeImageToBase64(imageFile);
+                const mimeType = imageFile.type.split('/')[1];
+                
+                const payload = {
+                    model: currentModel,
+                    messages: [
+                        {
+                            role: "user",
+                            content: [
+                                { type: "text", text: question },
+                                {
+                                    type: "image_url",
+                                    image_url: {
+                                        url: `data:image/${mimeType};base64,${base64Data}`
+                                    }
+                                }
+                            ]
+                        }
+                    ],
+                    max_tokens: parseInt(tokenSlider.value)
+                };
+
+                const response = await fetch(API_URL, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+                return data.choices[0].message.content;
+            } catch (error) {
+                console.error("Image analysis error:", error);
+                showError("Failed to analyze image", error);
+                return "Sorry, I couldn't analyze that image.";
+            }
+        }
+
+        // Helper function to encode image to base64
+        function encodeImageToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    const base64String = reader.result.split(',')[1];
+                    resolve(base64String);
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        // [Rest of the helper functions remain the same with additions for error handling]
+        // ...
+
+        // Modified renderMessages to handle thinking state and reasoning content
+        function renderMessages() {
+            chatMessages.innerHTML = '';
+            
+            messages.forEach((msg, index) => {
+                if (msg.thinking) {
+                    renderThinkingIndicator();
+                    return;
+                }
+                
+                // [Previous message rendering logic]
+                // ... with additions for:
+                // - Model icons from MODEL_ICONS
+                // - Better error handling
+                // - Thinking content display for reasoning models
+            });
+            
+            // Process markdown and math
+            processMarkdownAndMath();
+        }
+
+        function renderThinkingIndicator() {
+            const thinkingDiv = document.createElement('div');
+            thinkingDiv.className = 'thinking-container';
+            
+            thinkingDiv.innerHTML = `
+                <div class="message-avatar">
+                    <img src="https://via.placeholder.com/40/6e48aa/ffffff?text=OM" alt="OMUS AI">
+                </div>
+                <div class="thinking-content">
+                    <div class="thinking-dots">
+                        <div class="thinking-dot"></div>
+                        <div class="thinking-dot"></div>
+                        <div class="thinking-dot"></div>
+                    </div>
+                    <span>OMUS AI is thinking...</span>
+                </div>
+            `;
+            
+            chatMessages.appendChild(thinkingDiv);
+            scrollToBottom();
+        }
+
+        // Error handling function
+        function showError(message, error) {
+            const errorId = generateMessageId();
+            
+            const errorDetails = error ? `
+                <div class="error-details">
+                    <strong>Error details:</strong> ${error.message || 'No details available'}
+                </div>
+                <div class="error-actions">
+                    <button class="error-btn report-btn">
+                        <i class="fas fa-bug"></i> Report Issue
+                    </button>
+                </div>
+            ` : '';
+            
+            messages.push({
+                id: errorId,
+                sender: 'system',
+                content: `
+                    <div class="error-message">
+                        <div class="error-header">
+                            <div class="error-title">
+                                <i class="fas fa-exclamation-triangle"></i> ${message}
+                            </div>
+                            <div class="error-close">
+                                <i class="fas fa-times"></i>
+                            </div>
+                        </div>
+                        ${errorDetails}
+                    </div>
+                `,
+                time: getCurrentTime()
+            });
+            
+            saveToLocalStorage();
+            renderMessages();
+            scrollToBottom();
+            
+            // Add event listener for report button
+            setTimeout(() => {
+                const reportBtn = document.querySelector(`.message[id="${errorId}"] .report-btn`);
+                if (reportBtn) {
+                    reportBtn.addEventListener('click', () => {
+                        reportIssue(message, error);
+                    });
+                }
+                
+                const errorClose = document.querySelector(`.message[id="${errorId}"] .error-close`);
+                if (errorClose) {
+                    errorClose.addEventListener('click', () => {
+                        messages = messages.filter(msg => msg.id !== errorId);
+                        saveToLocalStorage();
+                        renderMessages();
+                    });
+                }
+            }, 100);
+        }
+
+        function reportIssue(message, error) {
+            const errorDetails = error ? `
+                Error: ${error.message}
+                Stack: ${error.stack}
+                Time: ${new Date().toISOString()}
+                Model: ${currentModel}
+                Last Messages: ${JSON.stringify(messages.slice(-3), null, 2)}
+            ` : 'No error details available';
+            
+            const subject = encodeURIComponent(`OMUS AI Error Report: ${message}`);
+            const body = encodeURIComponent(`
+                Please describe the issue you encountered:
+                
+                ===== DO NOT EDIT BELOW THIS LINE =====
+                ${errorDetails}
+            `);
+            
+            window.open(`mailto:support@omusai.com?subject=${subject}&body=${body}`);
+        }
+
+        // Local storage functions
+        function saveToLocalStorage() {
+            const data = {
+                threads,
+                currentThreadId,
+                settings: {
+                    model: currentModel,
+                    voice: currentVoice,
+                    maxTokens: tokenSlider.value,
+                    temperature: tempSlider.value,
+                    theme: body.getAttribute('data-theme')
+                }
+            };
+            
+            localStorage.setItem('omusAI', JSON.stringify(data));
+        }
+
+        function loadSavedData() {
+            const savedData = localStorage.getItem('omusAI');
+            if (savedData) {
+                try {
+                    const data = JSON.parse(savedData);
+                    
+                    if (data.threads) {
+                        threads = data.threads;
+                    }
+                    
+                    if (data.currentThreadId && threads[data.currentThreadId]) {
+                        currentThreadId = data.currentThreadId;
+                        messages = [...threads[currentThreadId].messages];
+                    }
+                    
+                    if (data.settings) {
+                        currentModel = data.settings.model || currentModel;
+                        currentVoice = data.settings.voice || currentVoice;
+                        tokenSlider.value = data.settings.maxTokens || tokenSlider.value;
+                        tempSlider.value = data.settings.temperature || tempSlider.value;
+                        tokenValue.textContent = tokenSlider.value;
+                        tempValue.textContent = tempSlider.value;
+                        
+                        if (data.settings.theme) {
+                            body.setAttribute('data-theme', data.settings.theme);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error loading saved data:', error);
+                }
+            }
+        }
+
+        function addWelcomeMessage() {
+            const welcomeMessage = {
+                id: generateMessageId(),
+                sender: 'ai',
+                content: `Hello! I'm OMUS AI, your advanced AI assistant. I'm here to help you with anything you need - from answering questions to generating creative content, analyzing data, and much more.\n\nFeel free to ask me anything or explore my features through the settings menu.\n\nHere's an example of what I can do:\n\n\`\`\`javascript\n// Calculate Fibonacci sequence\nfunction fibonacci(n) {\n    if (n <= 1) return n;\n    return fibonacci(n - 1) + fibonacci(n - 2);\n}\n\nconsole.log(fibonacci(10)); // Output: 55\n\`\`\`\n\nAnd some math:\n\n\\[ \\int_{a}^{b} x^2 \\,dx = \\frac{b^3 - a^3}{3} \\]`,
+                time: getCurrentTime(),
+                model: currentModel
+            };
+            
+            messages.push(welcomeMessage);
+            threads[currentThreadId].messages.push(welcomeMessage);
+            saveToLocalStorage();
+        }
+
+        // Helper functions
+        function generateMessageId() {
+            return Date.now().toString(36) + Math.random().toString(36).substr(2);
+        }
+
+        function generateThreadId() {
+            return 'thread_' + Date.now().toString(36) + Math.random().toString(36).substr(2);
+        }
+
+        // [Rest of the helper functions remain the same]
+        // ...
+    </script>
+</body>
+</html>
