@@ -9,5 +9,5 @@ xcrun --sdk iphoneos clang \
   ChaiUpdateBlocker.c -o ChaiUpdateBlocker.dylib
 codesign --force --sign - ChaiUpdateBlocker.dylib
 file ChaiUpdateBlocker.dylib
-lipo -verify_arch arm64 ChaiUpdateBlocker.dylib
+lipo -info ChaiUpdateBlocker.dylib | grep -q 'arm64'
 echo "Success: $(pwd)/ChaiUpdateBlocker.dylib"
