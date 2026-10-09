@@ -1,4 +1,4 @@
-name: Build ChaiUpdateBlocker V2 dylib
+name: Build ChaiUpdateBlocker V3 dylib
 on:
   push:
     branches:
@@ -23,14 +23,14 @@ jobs:
         run: bash build_on_mac.sh
       - name: Verify dylib
         run: |
-          file ChaiUpdateBlockerV2.dylib
-          lipo -info ChaiUpdateBlockerV2.dylib
-          otool -hv ChaiUpdateBlockerV2.dylib
-          codesign --verify ChaiUpdateBlockerV2.dylib
+          file ChaiUpdateBlockerV3.dylib
+          lipo -info ChaiUpdateBlockerV3.dylib
+          otool -hv ChaiUpdateBlockerV3.dylib
+          codesign --verify ChaiUpdateBlockerV3.dylib
       - name: Upload compiled dylib
         uses: actions/upload-artifact@v4
         with:
-          name: ChaiUpdateBlockerV2-ios-arm64
-          path: ChaiUpdateBlockerV2.dylib
+          name: ChaiUpdateBlockerV3-ios-arm64
+          path: ChaiUpdateBlockerV3.dylib
           if-no-files-found: error
           retention-days: 30
